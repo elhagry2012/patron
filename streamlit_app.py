@@ -4,16 +4,14 @@
 
 - بدون تسجيل دخول: أي شخص يفتح الرابط يدخل مباشرة على مولّد الباترون.
 - التحليل بـ Gemini Vision مباشرة من التطبيق (نفس منطق server/main.py).
-- مفتاح GEMINI_API_KEY يُقرأ من st.secrets (Streamlit Cloud) أو من متغيرات البيئة فقط،
-  ولا يظهر أبداً في الواجهة أو في رسائل الخطأ.
+- كل مستخدم يكتب مفتاح Gemini الخاص به في الشريط الجانبي. المفتاح يبقى فقط في
+  st.session_state لجلسة المتصفح الحالية: لا يُحفظ في ملف ولا كاش ولا يُطبع في السجلات.
 
 التشغيل محلياً:
-    pip install -r streamlit_requirements.txt
-    set GEMINI_API_KEY=...        (أو ملف .streamlit/secrets.toml)
+    pip install -r requirements.txt
     streamlit run streamlit_app.py
 """
 
-import os
 import re
 
 import streamlit as st
@@ -30,27 +28,14 @@ SCHEMATIC_HEADING = "📐 أولاً: رسمة وباترون المخطط ال�
 STEPS_HEADING = "📋 ثانياً: الشرح التفصيلي وكيفية العمل (Step-by-Step Instructions)"
 
 
-# ═══════════════════════════════════════════════════════════════════
-#  الإعدادات السرية — st.secrets أولاً ثم متغيرات البيئة
-# ═══════════════════════════════════════════════════════════════════
-def get_setting(name: str, default: str = "") -> str:
-    try:
-        if name in st.secrets:
-            return str(st.secrets[name]).strip()
-    except Exception:  # لا يوجد ملف secrets.toml — طبيعي محلياً
-        pass
-    return os.environ.get(name, default).strip()
+MODELS = ["gemini-3.5-flash", "gemini-3.5-flash-lite"]  # بالترتيب، مع بديل احتياطي
+AI_STUDIO_URL = "https://aistudio.google.com/apikey"
+KEY_STATE = "user_gemini_api_key"  # المكان الوحيد الذي يعيش فيه المفتاح: جلسة المتصفح الحالية
 
 
-MODELS = [
-    m.strip()
-    for m in get_setting("GEMINI_MODELS", "gemini-3.5-flash,gemini-3.5-flash-lite").split(",")
-    if m.strip()
-]
-
-
-@st.cache_resource(show_spinner=False)
-def get_client(api_key: str) -> genai.Client:
+def make_client(api_key: str) -> genai.Client:
+    # عمداً بدون st.cache_resource: الكاش مشترك بين كل المستخدمين على الخادم،
+    # فنُنشئ عميلاً جديداً لكل طلب ولا نحتفظ بالمفتاح خارج session_state.
     return genai.Client(
         api_key=api_key,
         http_options=types.HttpOptions(timeout=GEMINI_TIMEOUT_MS),
@@ -156,11 +141,13 @@ def analyze(client: genai.Client, image: bytes, mime: str, user_prompt: str) -> 
             )
         except genai_errors.APIError as ex:
             last_error = f"{model}: {ex.code}"
-            if ex.code in (400, 401, 403) and "API key" in str(ex.message or ""):
-                raise AnalysisError("مفتاح Gemini غير صالح. راجع GEMINI_API_KEY في إعدادات التطبيق.") from ex
+            if ex.code in (401, 403) or (ex.code == 400 and "api key" in str(ex.message or "").lower()):
+                raise AnalysisError(
+                    "مفتاح Gemini غير صالح أو غير مفعّل. تأكد إنك نسخته كامل من Google AI Studio وجرّب تاني."
+                ) from None  # from None: لا نربط الخطأ الأصلي حتى لا تظهر أي تفاصيل للطلب
             if ex.code in (404, 408, 429, 500, 503, 504):
                 continue  # النموذج غير متاح أو مشغول → جرّب التالي
-            raise AnalysisError("رفضت خدمة Gemini الطلب. جرّب صورة أخرى.") from ex
+            raise AnalysisError("رفضت خدمة Gemini الطلب. جرّب صورة أخرى.") from None
         except Exception as ex:  # مهلة أو مشكلة اتصال
             last_error = f"{model}: {type(ex).__name__}"
             continue
@@ -198,13 +185,25 @@ st.markdown(
 st.title("🧶 باترون — مساعد الكروشيه الذكي")
 st.write("ارفع صورة قطعة كروشيه كاملة أو تفصيلة موتيف، وهنطلع لك رسمة الباترون وخطوات العمل بالتفصيل.")
 
-api_key = get_setting("GEMINI_API_KEY")
-if not api_key:
-    st.error(
-        "التطبيق غير مُعد بعد: أضف GEMINI_API_KEY في إعدادات Secrets على Streamlit Cloud "
-        "(أو كمتغير بيئة عند التشغيل محلياً)."
+with st.sidebar:
+    st.header("🔑 مفتاح Gemini")
+    st.text_input(
+        "اكتب مفتاح Gemini API الخاص بك",
+        type="password",
+        key=KEY_STATE,
+        placeholder="الصق المفتاح هنا",
+        autocomplete="off",
+        help="المفتاح بيفضل في جلسة المتصفح دي بس، ومش بيتحفظ ولا بيتسجل في أي مكان.",
     )
-    st.stop()
+    st.markdown(
+        f"معندكش مفتاح؟ [احصل على مفتاح مجاني من Google AI Studio]({AI_STUDIO_URL}) "
+        "← سجّل دخول بحساب جوجل ← **Create API key** ← انسخه والصقه هنا."
+    )
+    st.caption("🔒 المفتاح يُمسح تلقائياً لما تقفل الصفحة أو تعمل تحديث.")
+
+api_key = (st.session_state.get(KEY_STATE) or "").strip()
+if not api_key:
+    st.info("👈 أهلاً بيك! علشان تبدأ، اكتب مفتاح Gemini الخاص بيك في الشريط الجانبي (مجاني من Google AI Studio).")
 
 uploaded_file = st.file_uploader(
     "اختر صورة القطعة (صورة واضحة على خلفية سادة)", type=["jpg", "jpeg", "png", "webp"]
@@ -221,7 +220,11 @@ notes = st.text_area(
 if uploaded_file is not None:
     st.image(uploaded_file, caption="الصورة المطلوبة", use_container_width=True)
 
-    if st.button("حلّل الصورة واكتب الباترون 🪄", type="primary"):
+    clicked = st.button("حلّل الصورة واكتب الباترون 🪄", type="primary", disabled=not api_key)
+    if not api_key:
+        st.warning("🔑 محتاجين مفتاح Gemini الأول. اكتبه في الشريط الجانبي وبعدها اضغط تحليل.")
+
+    if clicked and api_key:
         image_bytes = uploaded_file.getvalue()
         mime = "image/jpeg" if uploaded_file.type == "image/jpg" else uploaded_file.type
 
@@ -238,7 +241,7 @@ if uploaded_file is not None:
 
         try:
             with st.spinner("جاري دراسة الغرز ورسم الباترون... (قد يستغرق دقيقة)"):
-                result = analyze(get_client(api_key), image_bytes, mime, user_prompt)
+                result = analyze(make_client(api_key), image_bytes, mime, user_prompt)
         except AnalysisError as ex:
             st.error(str(ex))
             st.stop()
