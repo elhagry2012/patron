@@ -1,0 +1,5 @@
+.streamlit/secrets.toml
+__pycache__/
+build/
+app_gemini_direct_backup.py
+.vscode/

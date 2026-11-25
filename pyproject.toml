@@ -1,0 +1,33 @@
+[project]
+name = "crochet-helper"
+version = "1.0.0"
+description = "باترون — مساعد الكروشيه الذكي"
+requires-python = ">=3.10"
+dependencies = [
+    "flet==1.1.2",
+    "httpx>=0.27",
+    "pillow>=10.0",
+]
+
+[tool.flet]
+org = "com.crochet"
+product = "Patron"
+company = "Patron"
+
+[tool.flet.app]
+path = "."
+module = "app"
+exclude = [
+    "server",
+    "tools",
+    "build",
+    ".vscode",
+    "__pycache__",
+    "streamlit_app.py",
+    "streamlit_requirements.txt",
+    "app_claude_backup.py",
+    "app_gemini_direct_backup.py",
+]
+
+[tool.flet.android.permission]
+"android.permission.INTERNET" = true
